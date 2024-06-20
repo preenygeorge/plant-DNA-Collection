@@ -1,0 +1,193 @@
+WITH plantDNA AS 
+  ( SELECT o.oid--,co.AvailabilityStatus    -- value 1: Indicates "In Collection" ,co.AccessionStatus, co.Name
+					,co.DnaId
+					, co.CatalogueNumber
+					,o.Id
+					,o.TaxonomicName -- o.Comment
+					,REPLACE( REPLACE(TRIM( REPLACE( REPLACE( REPLACE(REPLACE (REPLACE( o.TemporaryName, ' X ', ' × ' ), '% sp %', '% sp. %'), '% aff %', '% aff. %'), ' vel ', ' '), ' vel.', ' ')), ' vell ', ''), ' nr.', '') 
+									AS TemporaryName 
+					--,i.NameText --, i.TaxonomicName
+					--,i.Author, o.IdentificationQualifier as oiqualifier, co.IdentificationQualifier as coqualifier
+
+					,CASE WHEN (CHARINDEX( ' ', REVERSE (O.TemporaryName)) - 1  ) > 0  
+                  THEN  REVERSE( (SUBSTRING( REVERSE (O.TemporaryName) , 1,  CHARINDEX(' ', REVERSE(O.TemporaryName)) -1 ) ))
+								ELSE 'Plantae '   --Set Kingdom Name
+					 END AS FamilyName
+
+					,CASE WHEN (CHARINDEX(' ', TRIM(O.TemporaryName)) -1  ) > 0 
+							THEN (SUBSTRING ( TRIM(REPLACE(REPLACE(TemporaryName,'×',' '),'.',' ')) , 1, 
+											CHARINDEX(' ', TRIM(REPLACE(REPLACE(TemporaryName,'×',' '),'.',' '))   ) - 1
+											) )
+								 ELSE '  '
+					 END AS  GenusName	
+
+			--VERBATIMTAXONOMICNAME & VERBATIMTAXONOMICNAMEREASON
+			--,o.VerbatimTaxonomicName , o.VerbatimTaxonomicNameReason, i.VerbatimTaxonomicName ,i.VerbatimTaxonomicNameReason
+			--CurrentIdentification , i.IsCurrent, i.IdentificationStatus, o.CurrentIdentification  --FK Occurrence_CurrentIdentification, i.IdentificationQualifier
+
+				FROM KPTICMSSQL01.[ICMS_Dev].[dbo].Identification i
+						INNER JOIN KPTICMSSQL01.[ICMS_Dev].[dbo].Occurrence o  ON i.Occurrence = o.Oid
+						INNER JOIN KPTICMSSQL01.[ICMS_Dev].[dbo].CollectionObject co ON o.Oid = co.Occurrence
+
+				WHERE  i.IsCurrent = 1  --AND i.TaxonomicName IS NULL 
+					AND co.Collection IN ('C57E95D1-9BCD-430E-A623-D686BFC18F4F')
+					AND co.dnaid IS NOT NULL  AND co.DnaId <> 0
+					AND co.AvailabilityStatus = 1
+					AND co.GCRecord IS NULL -- not deleted
+
+					AND o.TemporaryName IS NOT NULL
+					AND o.TemporaryName NOT LIKE ('%data%')
+					AND o.TemporaryName NOT LIKE ('%diondev%')
+					AND o.TemporaryName NOT LIKE ('%Edith%')
+					AND o.TemporaryName NOT LIKE ('%free%')
+					AND o.TemporaryName NOT LIKE ('%Hypericum%')
+					AND o.TemporaryName NOT LIKE ('%indet%')
+					AND o.TemporaryName NOT LIKE ('%indetermined%')
+					AND o.TemporaryName NOT LIKE ('%Irina%')
+					AND o.TemporaryName NOT LIKE ('%Jeremy%')
+					AND o.TemporaryName NOT LIKE ('%Martin Ha%')
+					AND o.TemporaryName NOT LIKE ('%Not Identified%')
+					AND o.TemporaryName NOT LIKE ('%powell%')
+					AND o.TemporaryName NOT LIKE ('%reserve%')
+					AND o.TemporaryName NOT LIKE ('%Thom/Pandanaceae%')
+					AND o.TemporaryName NOT LIKE ('%Wolf E%')
+					AND o.TemporaryName NOT LIKE ('%Unknown%')
+					AND o.TemporaryName NOT LIKE ('%UKOT%')
+					AND o.TemporaryName NOT LIKE ('%?%')
+				),
+
+/**
+--NOTED: 4277 row count in SQL extract; 4256 rows cleaned
+--NOTED 4286 row count in EarthCape extract
+**/
+
+stageOne AS 
+    (SELECT --oid, DnaId ,CatalogueNumber , Id ,
+					TemporaryName, FamilyName, GenusName, 
+					CASE WHEN (TemporaryName LIKE '% sp %' OR TemporaryName LIKE '% sp.%') THEN ' '
+							 WHEN (TemporaryName LIKE '% aff %' OR TemporaryName LIKE '% aff.%') 
+										THEN TRIM( REPLACE(REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '),'×', ' '), 'aff.', ' '))
+              WHEN (TemporaryName LIKE '% cf %' OR TemporaryName LIKE '% cf.%')
+										THEN TRIM( REPLACE(REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '),'×', ' '), 'cf.', ' '))
+							WHEN CHARINDEX (' ',TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '), '×', ' '))) = 0
+											THEN TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '), '×', ' '))
+							WHEN CHARINDEX (' ',TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '), '×', ' '))) > 0
+											THEN SUBSTRING( TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '), '×', ' ')), 1, 
+																CHARINDEX (' ',TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '), '×', ' ')))
+															)
+										ELSE 'tbc'
+					END AS SpeciesName 
+
+				,CASE WHEN ( TemporaryName LIKE '%×%' AND (CHARINDEX ( '×', TRIM(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' ')) ) - 1 = 0 ) )
+									THEN  'xSp' 
+						WHEN ( TemporaryName LIKE '%×%' AND (CHARINDEX ( '×', TRIM(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' ')) ) - 1 > 0 ) )
+									THEN  'xI' 
+						ELSE ' '
+				 END AS Hybrid--Look at hybrids
+
+				,CASE WHEN CHARINDEX (' ',TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '), GenusName, ' '), '×', ' '))) > 0 
+							  AND (TemporaryName NOT LIKE '% sp.%')	AND (TemporaryName NOT LIKE '%''%''%')
+								THEN 	TRIM( SUBSTRING( TRIM(REPLACE(REPLACE(REPLACE(TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '),GenusName, ' '), '×', ' ')),'var.', ' '),'subsp.', ' '),'f.',' ')),
+							CHARINDEX (' ',TRIM(REPLACE(REPLACE(REPLACE(TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '),GenusName, ' '), '×', ' ')),'var.', ' '),'subsp.', ' '),'f.',' '))),
+				LEN( TRIM(REPLACE(REPLACE(REPLACE(TRIM( REPLACE(REPLACE(REPLACE(TemporaryName, FamilyName, ' '),GenusName, ' '), '×', ' ')),'var.', ' '),'subsp.', ' '),'f.',' '))
+					) ) )
+							
+            WHEN (TemporaryName LIKE '%sp %') OR (TemporaryName LIKE '%''%''%' ) --sp then no infraspecific
+										OR (TemporaryName LIKE '% sp.%') OR (TemporaryName LIKE '% sp%')  THEN ' '
+									ELSE ' '
+				 END AS iSpecific
+
+				,CASE WHEN TemporaryName LIKE ('%var.%') THEN 'var.'
+							WHEN TemporaryName LIKE ('% f.%') THEN 'f.'
+							WHEN TemporaryName LIKE ('%subsp.%') THEN 'subsp.'
+									ELSE ' '
+				 END AS iRank
+
+				,CASE WHEN (TemporaryName LIKE '% aff. %' OR TemporaryName LIKE '% aff %') THEN '0'
+							WHEN (TemporaryName LIKE '% cf. %' OR TemporaryName LIKE '% c.f %') THEN '1'
+							WHEN (TemporaryName LIKE '% ? %') THEN '5'
+								   ELSE ' '
+				 END AS IdQualifier
+			FROM plantDNA
+			WHERE TemporaryName <> ' '
+					AND TemporaryName NOT LIKE '%s.l.%' -- how to address??
+					--AND TemporaryName LIKE '%''%''%' --Look at Cultivars
+					--AND TemporaryName NOT LIKE '%sp%'
+					--AND TemporaryName LIKE '%×%'   --Look at hybrids
+					  AND FamilyName <> ' '  --look at faulty records
+					--AND ((TemporaryName LIKE '% aff. %' OR TemporaryName LIKE '% aff %') OR ((TemporaryName LIKE '% cf. %' OR TemporaryName LIKE '% c.f %')) )
+			),
+
+stage2 AS 
+    (SELECT TemporaryName, FamilyName,GenusName, --SpeciesName,
+				  CASE WHEN (SpeciesName LIKE '%(%' OR SpeciesName LIKE '%)%') THEN ' ' 
+					     WHEN (SpeciesName LIKE '%vel.%') THEN TRIM (REPLACE( SpeciesName, 'vel.', ''))
+					 		ELSE SpeciesName  
+				  END AS SpeciesName ,
+
+				CASE WHEN (iSpecific LIKE '%(%' OR iSpecific LIKE '%)%') THEN ' '
+					   WHEN iSpecific = 'af' THEN ' '
+					   WHEN CHARINDEX(' ', iSpecific) > 0 THEN  LEFT( iSpecific, CHARINDEX(' ', iSpecific)  )
+						      ELSE iSpecific  
+				END AS InfraSpecific,  
+			
+				iRank AS InfraspecificRank, 
+				Hybrid, 
+				IdQualifier
+
+			FROM stageOne 
+			--WHERE TemporaryName LIKE '% sp. %' AND InfraspecificRank <> ' ' AND TemporaryName NOT LIKE '%×%'
+			)
+
+SELECT DISTINCT
+		TemporaryName, --t.Kewid, tn.Kewid , FamilyName,	
+		GenusName AS Genus,  
+		SpeciesName  AS Species, 
+		InfraSpecific,
+		InfraspecificRank, 	--Hybrid,
+
+		CASE WHEN (GenusName <> ' ' AND SpeciesName = ' ' AND InfraSpecific = ' ') THEN TRIM(GenusName)
+			WHEN (TemporaryName LIKE '% sp. %' OR TemporaryName LIKE '% sp %') THEN TRIM(GenusName)
+			WHEN GenusName <> ' ' AND SpeciesName <> ' ' AND InfraSpecific = ' ' AND InfraspecificRank = ' '  AND Hybrid = ' ' 
+					THEN TRIM(CONCAT(GenusName, ' ', SpeciesName))
+			WHEN GenusName <> ' ' AND SpeciesName <> ' ' AND InfraSpecific <> ' ' AND InfraspecificRank = 'var.' AND Hybrid = ' '
+					THEN TRIM(CONCAT(GenusName, ' ', SpeciesName, ' var. ', InfraSpecific))
+			WHEN GenusName <> ' ' AND SpeciesName <> ' ' AND InfraSpecific <> ' ' AND InfraspecificRank = 'subsp.'  AND Hybrid = ' '
+					THEN TRIM(CONCAT(GenusName, ' ', SpeciesName, ' subsp. ', InfraSpecific))
+			WHEN GenusName <> ' ' AND SpeciesName <> ' ' AND InfraSpecific <> ' ' AND InfraspecificRank = 'f.'  AND Hybrid = ' '
+					THEN TRIM(CONCAT(GenusName, ' ', SpeciesName, ' f. ', InfraSpecific))
+			WHEN GenusName <> ' ' AND SpeciesName <> ' ' AND InfraSpecific <> ' ' AND InfraspecificRank = ' ' AND Hybrid = ' '
+					THEN TRIM(CONCAT(GenusName, ' ', SpeciesName, ' var. ', InfraSpecific))
+
+			WHEN Hybrid <> ' ' THEN TRIM( REPLACE( TemporaryName, FamilyName, ' ') )
+			WHEN GenusName = ' ' AND SpeciesName = ' ' THEN ISNULL(FamilyName, 'Plantae' )
+			ELSE 'tbc'
+		END AS iTaxonName
+		--INTO pDNA_3252_1806
+FROM stage2 AS s		
+		
+-- 4253 rows pulled clean   > Distinct count now: 3253 rows 18th June 2024
+--code amend 16/06 total rows: 4259
+--15 rows where rank <> ' '
+WHERE FamilyName <> 'Plantae' 
+			--AND InfraspecificRank <> ' '   --15 records
+			AND GenusName <> 'PMG'
+			--AND Hybrid <> ' '   -- 59 rows
+
+
+GROUP BY s.TemporaryName, --t.Kewid, tn.Kewid ,
+		FamilyName,	
+		GenusName ,  
+		SpeciesName , 
+		InfraSpecific,	
+		InfraspecificRank, Hybrid,
+		CASE WHEN (GenusName <> ' ' AND SpeciesName = ' ' AND InfraSpecific = ' ') THEN TRIM(GenusName)
+			WHEN (TemporaryName LIKE '% sp. %' OR TemporaryName LIKE '% sp %') THEN TRIM(GenusName)
+			WHEN GenusName <> ' ' AND SpeciesName <> ' ' AND InfraSpecific = ' ' AND InfraspecificRank = ' ' THEN TRIM(CONCAT(GenusName, ' ', SpeciesName))
+			WHEN GenusName <> ' ' AND SpeciesName <> ' ' AND InfraSpecific <> ' ' AND InfraspecificRank = 'var.' 
+					THEN TRIM(CONCAT(GenusName, ' ', SpeciesName, ' var.', InfraSpecific))
+			
+			ELSE 'tbc'
+		END
+
+--ORDER BY Genus, Species, Infraspecific -- TemporaryName
